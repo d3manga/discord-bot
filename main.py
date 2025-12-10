@@ -28,6 +28,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 BLOGGER_API_KEY = os.getenv("BLOGGER_API_KEY", "")
 BLOG_ID = os.getenv("BLOG_ID", "")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
+NOTIFICATION_ROLE_ID = os.getenv("NOTIFICATION_ROLE_ID", "")
 
 # Blogger API client
 blog = build("blogger", "v3", developerKey=BLOGGER_API_KEY)
@@ -241,7 +242,17 @@ async def fetchUpdates():
                  ),
             )
 
-            msg = await channel.send(embed=embed)
+            # Role mention ile mesaj gönder (Requirements 1.1, 1.2, 1.3, 3.1, 3.2, 3.3)
+            try:
+                if NOTIFICATION_ROLE_ID:
+                    role_mention = f"<@&{NOTIFICATION_ROLE_ID}>"
+                    msg = await channel.send(content=role_mention, embed=embed)
+                else:
+                    msg = await channel.send(embed=embed)
+            except Exception as e:
+                # Fallback: mention başarısız olursa sadece embed gönder
+                print(f"[fetchUpdates] Role mention hatası: {e}")
+                msg = await channel.send(embed=embed)
             sent_messages[post_id] = msg.id
 
             client.lastPostTime = published  # type: ignore
