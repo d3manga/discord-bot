@@ -1,6 +1,7 @@
-
 discord-py
 google-api-python-client
 requests
 flask
 waitress
+hypothesis
+pytest
