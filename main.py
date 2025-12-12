@@ -39,6 +39,60 @@ sent_messages = {}
 
 
 # ───────────────────────────────────────────────
+# SERİ KANALI BULAN FONKSİYON
+# ───────────────────────────────────────────────
+def get_series_channel(guild: discord.Guild, series_name: str) -> discord.TextChannel | None:
+    """
+    Discord sunucusunda seri ismiyle eşleşen kanalı bulur.
+    Case-insensitive exact matching yapar.
+    
+    Args:
+        guild: Discord sunucusu
+        series_name: Blogger'dan gelen seri etiketi
+    
+    Returns:
+        Eşleşen text channel veya None
+    
+    Requirements: 1.1, 1.4, 2.1, 2.3
+    """
+    if not series_name:
+        return None
+    
+    series_lower = series_name.lower()
+    for channel in guild.text_channels:
+        if channel.name.lower() == series_lower:
+            return channel
+    return None
+
+
+# ───────────────────────────────────────────────
+# SERİ ROLÜ BULAN FONKSİYON
+# ───────────────────────────────────────────────
+def get_series_role(guild: discord.Guild, series_name: str) -> discord.Role | None:
+    """
+    Discord sunucusunda seri ismiyle eşleşen rolü bulur.
+    Case-insensitive exact matching yapar.
+    
+    Args:
+        guild: Discord sunucusu
+        series_name: Blogger'dan gelen seri etiketi
+    
+    Returns:
+        Eşleşen rol veya None (eşleşme yoksa)
+    
+    Requirements: 1.1, 1.4, 2.1, 2.3
+    """
+    if not series_name:
+        return None
+    
+    series_lower = series_name.lower()
+    for role in guild.roles:
+        if role.name.lower() == series_lower:
+            return role
+    return None
+
+
+# ───────────────────────────────────────────────
 # SERİDEN KAPAK GÖRSELİ ALAN FONKSİYON
 # ───────────────────────────────────────────────
 def get_series_cover(manga_name: str):
@@ -66,6 +120,65 @@ def get_series_cover(manga_name: str):
 
     except Exception as e:
         print("Series cover error:", e)
+        return None
+
+
+def extract_first_image_src(html_content: str) -> str | None:
+    """
+    HTML içeriğinden ilk img etiketinin src attribute'unu çıkarır.
+    
+    Args:
+        html_content: HTML içeriği
+    
+    Returns:
+        İlk img src URL'si veya None (img yoksa)
+    
+    Requirements: 3.2, 3.4
+    """
+    if not html_content:
+        return None
+    
+    img_match = re.search(r'<img[^>]+src="([^"]+)"', html_content)
+    if img_match:
+        return img_match.group(1)
+    return None
+
+
+def get_series_cover_by_label(series_name: str) -> str | None:
+    """
+    Blogger'da hem seri ismi hem "series" etiketine sahip posttan
+    kapak fotoğrafını çeker.
+    
+    Args:
+        series_name: Manga/webtoon seri ismi
+    
+    Returns:
+        Kapak fotoğrafı URL'si veya None
+    
+    Requirements: 3.1, 3.2, 3.4
+    """
+    if not series_name:
+        return None
+    
+    try:
+        # Blogger API'den hem seri ismi hem "series" etiketli post ara
+        # labels parametresi virgülle ayrılmış etiketleri AND olarak arar
+        labels = f"{series_name},series"
+        url = (f"https://www.googleapis.com/blogger/v3/blogs/"
+               f"{BLOG_ID}/posts?labels={labels}&key={BLOGGER_API_KEY}")
+        data = requests.get(url).json()
+
+        if "items" not in data or not data["items"]:
+            return None
+
+        first_post = data["items"][0]
+        content = first_post.get("content", "")
+
+        # İlk img src'yi döndür
+        return extract_first_image_src(content)
+
+    except Exception as e:
+        print(f"[get_series_cover_by_label] Hata: {e}")
         return None
 
 
@@ -193,13 +306,22 @@ async def fetchUpdates():
                 chapter_number = title
 
             # ─────────────────────────────
-            # 3) Kapak görseli
+            # 3) Kapak görseli (Requirements: 3.3, 4.2, 4.3)
             # ─────────────────────────────
-            cover_image = get_series_cover(manga_title)
+            # Yeni fonksiyon: "series" etiketli posttan kapak al
+            # Error handling: Requirements 4.2, 4.3
+            DEFAULT_COVER_IMAGE = (
+                "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjuqd3-dB8OcbTh9M-R8LGZsRmnkvHxn4v1fv4nUAJqWjEBXyafKIV2ZNdFoCC6JtMciO_W14XKSCmHQIzsz9WG1PVtc9WC5sssKpUyyWSSnYFEuPorsfSlOCltsVdwMoVevKL3ARV73LFlSwZpMdvtV8Ytep4miek6BSrBWZPHD58w_uAM7qIJy4LzVE_5/s1600/321b9acf8c8-f6c1-4ede-882a-83125281a421---Kopya.png"
+            )
+            try:
+                cover_image = get_series_cover_by_label(manga_title)
+            except Exception as e:
+                print(f"[fetchUpdates] Kapak fotoğrafı hatası: {e}")
+                cover_image = None
+            
             if not cover_image:
-                cover_image = (
-                    "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjuqd3-dB8OcbTh9M-R8LGZsRmnkvHxn4v1fv4nUAJqWjEBXyafKIV2ZNdFoCC6JtMciO_W14XKSCmHQIzsz9WG1PVtc9WC5sssKpUyyWSSnYFEuPorsfSlOCltsVdwMoVevKL3ARV73LFlSwZpMdvtV8Ytep4miek6BSrBWZPHD58w_uAM7qIJy4LzVE_5/s1600/321b9acf8c8-f6c1-4ede-882a-83125281a421---Kopya.png"
-                )
+                # Fallback: varsayılan kapak görseli
+                cover_image = DEFAULT_COVER_IMAGE
 
             # ─────────────────────────────
             # 4) Embed oluştur
@@ -242,17 +364,45 @@ async def fetchUpdates():
                  ),
             )
 
-            # Role mention ile mesaj gönder (Requirements 1.1, 1.2, 1.3, 3.1, 3.2, 3.3)
+            # ─────────────────────────────
+            # 5) Seri kanalını bul ve mesaj gönder
+            # ─────────────────────────────
+            # Requirements: 1.2, 1.3, 4.1, 4.3
+            # Error handling: Requirements 4.1, 4.3
             try:
-                if NOTIFICATION_ROLE_ID:
-                    role_mention = f"<@&{NOTIFICATION_ROLE_ID}>"
-                    msg = await channel.send(content=role_mention, embed=embed)
+                series_channel = get_series_channel(channel.guild, manga_title)
+            except Exception as e:
+                print(f"[fetchUpdates] Kanal arama hatası: {e}")
+                series_channel = None
+            
+            if series_channel:
+                # Seri kanalı bulundu - @everyone ile gönder
+                target_channel = series_channel
+                mention = "@everyone"
+            else:
+                # Seri kanalı bulunamadı - fallback kanala @Tüm Seriler rolü ile gönder
+                target_channel = channel  # Fallback: varsayılan CHANNEL_ID
+                # Tüm Seriler rolünü bul
+                try:
+                    tum_seriler_role = discord.utils.get(channel.guild.roles, name="Tüm Seriler")
+                    if tum_seriler_role:
+                        mention = f"<@&{tum_seriler_role.id}>"
+                    else:
+                        mention = None
+                except Exception as e:
+                    print(f"[fetchUpdates] Rol arama hatası: {e}")
+                    mention = None
+            
+            # Mesajı gönder
+            try:
+                if mention:
+                    msg = await target_channel.send(content=mention, embed=embed)
                 else:
-                    msg = await channel.send(embed=embed)
+                    msg = await target_channel.send(embed=embed)
             except Exception as e:
                 # Fallback: mention başarısız olursa sadece embed gönder
-                print(f"[fetchUpdates] Role mention hatası: {e}")
-                msg = await channel.send(embed=embed)
+                print(f"[fetchUpdates] Mesaj gönderme hatası: {e}")
+                msg = await target_channel.send(embed=embed)
             sent_messages[post_id] = msg.id
 
             client.lastPostTime = published  # type: ignore
