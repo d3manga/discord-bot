@@ -1,15 +1,34 @@
 import os
 import re
+import random
 import requests
 import discord
 import traceback
 from discord.ext import commands, tasks
-from datetime import datetime
+from datetime import datetime, timezone
 from googleapiclient.discovery import build
 from flask import Flask
 from threading import Thread
 from waitress import serve
 from typing import cast
+
+# ───────────────────────────────────────────────
+# EMBED RENKLERİ (Rastgele seçilecek)
+# ───────────────────────────────────────────────
+EMBED_COLORS = [
+    0xFF6B6B,  # Kırmızı
+    0x4ECDC4,  # Turkuaz
+    0x45B7D1,  # Mavi
+    0x96CEB4,  # Yeşil
+    0xFECE00,  # Sarı
+    0xDDA0DD,  # Mor
+    0xFF8C42,  # Turuncu
+    0x98D8C8,  # Mint
+    0xF7DC6F,  # Altın
+    0xBB8FCE,  # Lavanta
+    0x85C1E9,  # Açık Mavi
+    0xF1948A,  # Pembe
+]
 
 # ───────────────────────────────────────────────
 # INTENTS
@@ -59,9 +78,15 @@ def get_series_channel(guild: discord.Guild, series_name: str) -> discord.TextCh
         return None
     
     series_lower = series_name.lower()
+    print(f"[get_series_channel] Aranan seri: '{series_name}' -> '{series_lower}'")
+    print(f"[get_series_channel] Mevcut kanallar: {[ch.name for ch in guild.text_channels]}")
+    
     for channel in guild.text_channels:
         if channel.name.lower() == series_lower:
+            print(f"[get_series_channel] EŞLEŞME BULUNDU: #{channel.name}")
             return channel
+    
+    print(f"[get_series_channel] Eşleşen kanal bulunamadı")
     return None
 
 
@@ -161,21 +186,35 @@ def get_series_cover_by_label(series_name: str) -> str | None:
         return None
     
     try:
-        # Blogger API'den hem seri ismi hem "series" etiketli post ara
-        # labels parametresi virgülle ayrılmış etiketleri AND olarak arar
-        labels = f"{series_name},series"
+        # Blogger API'den hem seri ismi hem "Series" etiketli post ara
+        # NOT: Blogger API case-sensitive, "Series" büyük S ile
+        labels = f"{series_name},Series"
         url = (f"https://www.googleapis.com/blogger/v3/blogs/"
                f"{BLOG_ID}/posts?labels={labels}&key={BLOGGER_API_KEY}")
+        print(f"[get_series_cover_by_label] Aranan etiketler: {labels}")
         data = requests.get(url).json()
+        print(f"[get_series_cover_by_label] API yanıtı: {data.get('items', 'YOK')[:1] if data.get('items') else 'BOŞ'}")
 
         if "items" not in data or not data["items"]:
+            # Küçük harfle de dene
+            labels_lower = f"{series_name},series"
+            url_lower = (f"https://www.googleapis.com/blogger/v3/blogs/"
+                        f"{BLOG_ID}/posts?labels={labels_lower}&key={BLOGGER_API_KEY}")
+            print(f"[get_series_cover_by_label] Küçük harfle deneniyor: {labels_lower}")
+            data = requests.get(url_lower).json()
+        
+        if "items" not in data or not data["items"]:
+            print(f"[get_series_cover_by_label] '{series_name}' + Series/series etiketli post bulunamadı")
             return None
 
         first_post = data["items"][0]
         content = first_post.get("content", "")
+        print(f"[get_series_cover_by_label] Post bulundu: {first_post.get('title', 'Başlık yok')}")
 
         # İlk img src'yi döndür
-        return extract_first_image_src(content)
+        img_url = extract_first_image_src(content)
+        print(f"[get_series_cover_by_label] Bulunan resim: {img_url[:50] if img_url else 'YOK'}...")
+        return img_url
 
     except Exception as e:
         print(f"[get_series_cover_by_label] Hata: {e}")
@@ -324,86 +363,107 @@ async def fetchUpdates():
                 cover_image = DEFAULT_COVER_IMAGE
 
             # ─────────────────────────────
-            # 4) Embed oluştur
+            # 4) Embed oluştur (Yeni tasarım)
             # ─────────────────────────────
             embed = discord.Embed(
-                title="📢 Yeni Bölüm Yayınlandı!",
-                description=
-                f"**{manga_title}** için yeni bir bölüm yayınlandı!",
-                color=0x00C2FF,
+                title=f"� {manBga_title}",
+                description=f"**Bölüm {chapter_number}** yayınlandı!\n\n"
+                           f"━━━━━━━━━━━━━━━━━━━━━━",
+                color=random.choice(EMBED_COLORS),  # Rastgele renk
             )
 
-            embed.set_thumbnail(url=(
-                "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhnSnG9Zm2z6BVlu5deBMX7YXV3e736-rkyuE2wucmhhTVFWt-94GlcEMQ40yBuYH2tozmNbFqgpohfDdGS6VIs-36SbvmHS9x4p-HMrn-pR1ikw8dQB9JYDQkukrKaWoZ5impyTfQggUWltIUmhe7OrT9dMSlkEuYAlnHfotuvyeoxIsLBVETdooVagSX_/s1600/gip3123hy.gif"
-            ))
-
+            # Seri ve bölüm bilgisi yan yana
             embed.add_field(
-                name="📘 Seri İsmi",
-                value=f"**{manga_title}**",
-                inline=False,
+                name="📚 Seri",
+                value=f"`{manga_title}`",
+                inline=True,
             )
 
             embed.add_field(
                 name="📄 Bölüm",
-                value=f"**Bölüm {chapter_number}**",
-                inline=False,
+                value=f"`{chapter_number}`",
+                inline=True,
             )
 
+            # Boş alan (satır atlama için)
             embed.add_field(
-                name="🔗 Bölüm Linki",
-                value=f"[Bölümü Aç]({url})",
-                inline=False,
+                name="\u200b",
+                value="\u200b",
+                inline=True,
             )
 
             embed.set_image(url=cover_image)
 
             embed.set_footer(
-                text=f"D3 Manga • Yayınlanma: {published}",
-                icon_url=
-                ("https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjb6KH5VdssQRFuN8X1CPZs1y7B2gCnBQfb0YMx4PqsqPioba6vm2SK2-wNvx-1Vc2N5Lkdr7iCo03CXnP6UWsTLwxr8IBY3hl-102Q_vZNIXdYVj7aeTUGqv8it8XmPmDN3wIb1Z6bTEWwOyFDB7zLkLoMW7gk5feZfAcQzSPnIl-AYkvPY6y0xAsM3JnY/s1600/dragon%20%282%29.png"
-                 ),
+                text="D3 Manga",
+                icon_url="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjb6KH5VdssQRFuN8X1CPZs1y7B2gCnBQfb0YMx4PqsqPioba6vm2SK2-wNvx-1Vc2N5Lkdr7iCo03CXnP6UWsTLwxr8IBY3hl-102Q_vZNIXdYVj7aeTUGqv8it8XmPmDN3wIb1Z6bTEWwOyFDB7zLkLoMW7gk5feZfAcQzSPnIl-AYkvPY6y0xAsM3JnY/s1600/dragon%20%282%29.png"
             )
+            
+            # Timestamp ekle
+            embed.timestamp = datetime.now(timezone.utc)
 
             # ─────────────────────────────
-            # 5) Seri kanalını bul ve mesaj gönder
+            # 4.1) Butonlar oluştur
             # ─────────────────────────────
-            # Requirements: 1.2, 1.3, 4.1, 4.3
-            # Error handling: Requirements 4.1, 4.3
+            view = discord.ui.View()
+            
+            # Bölümü Oku butonu
+            read_button = discord.ui.Button(
+                label="📖 Bölümü Oku",
+                style=discord.ButtonStyle.link,
+                url=url
+            )
+            view.add_item(read_button)
+            
+            # Seri sayfası butonu (Blogger'da seri etiketine git)
+            series_url = f"https://d3manga.blogspot.com/search/label/{manga_title.replace(' ', '%20')}"
+            series_button = discord.ui.Button(
+                label="📚 Tüm Bölümler",
+                style=discord.ButtonStyle.link,
+                url=series_url
+            )
+            view.add_item(series_button)
+
+            # ─────────────────────────────
+            # 5) Mesajları gönder (Her zaman iki kanala)
+            # ─────────────────────────────
+            # 1. Ana kanala (CHANNEL_ID) @Tüm Seriler rolü ile gönder
+            # 2. Seri kanalı varsa oraya da @everyone ile gönder
+            
+            # Tüm Seriler rolünü bul
+            tum_seriler_mention = None
+            try:
+                tum_seriler_role = discord.utils.get(channel.guild.roles, name="Tüm Seriler")
+                if tum_seriler_role:
+                    tum_seriler_mention = f"<@&{tum_seriler_role.id}>"
+            except Exception as e:
+                print(f"[fetchUpdates] Rol arama hatası: {e}")
+            
+            # Ana kanala (CHANNEL_ID) gönder - @Tüm Seriler ile
+            try:
+                if tum_seriler_mention:
+                    msg = await channel.send(content=tum_seriler_mention, embed=embed, view=view)
+                else:
+                    msg = await channel.send(embed=embed, view=view)
+                sent_messages[post_id] = msg.id
+                print(f"[fetchUpdates] Ana kanala mesaj gönderildi: {manga_title}")
+            except Exception as e:
+                print(f"[fetchUpdates] Ana kanal mesaj hatası: {e}")
+            
+            # Seri kanalını bul
             try:
                 series_channel = get_series_channel(channel.guild, manga_title)
             except Exception as e:
                 print(f"[fetchUpdates] Kanal arama hatası: {e}")
                 series_channel = None
             
-            if series_channel:
-                # Seri kanalı bulundu - @everyone ile gönder
-                target_channel = series_channel
-                mention = "@everyone"
-            else:
-                # Seri kanalı bulunamadı - fallback kanala @Tüm Seriler rolü ile gönder
-                target_channel = channel  # Fallback: varsayılan CHANNEL_ID
-                # Tüm Seriler rolünü bul
+            # Seri kanalı varsa oraya da gönder - @everyone ile
+            if series_channel and series_channel.id != channel.id:
                 try:
-                    tum_seriler_role = discord.utils.get(channel.guild.roles, name="Tüm Seriler")
-                    if tum_seriler_role:
-                        mention = f"<@&{tum_seriler_role.id}>"
-                    else:
-                        mention = None
+                    await series_channel.send(content="@everyone", embed=embed, view=view)
+                    print(f"[fetchUpdates] Seri kanalına mesaj gönderildi: #{series_channel.name}")
                 except Exception as e:
-                    print(f"[fetchUpdates] Rol arama hatası: {e}")
-                    mention = None
-            
-            # Mesajı gönder
-            try:
-                if mention:
-                    msg = await target_channel.send(content=mention, embed=embed)
-                else:
-                    msg = await target_channel.send(embed=embed)
-            except Exception as e:
-                # Fallback: mention başarısız olursa sadece embed gönder
-                print(f"[fetchUpdates] Mesaj gönderme hatası: {e}")
-                msg = await target_channel.send(embed=embed)
-            sent_messages[post_id] = msg.id
+                    print(f"[fetchUpdates] Seri kanalı mesaj hatası: {e}")
 
             client.lastPostTime = published  # type: ignore
 
