@@ -92,11 +92,25 @@ async def get_series_channel(guild: discord.Guild, series_name: str):
     for channel in guild.channels:
         if isinstance(channel, discord.ForumChannel):
             print(f"[get_series_channel] Forum kanalı bulundu: {channel.name}")
-            # Aktif thread'leri kontrol et
+            
+            # Cache'deki aktif thread'leri kontrol et
+            print(f"[get_series_channel] Cache'deki thread'ler: {[t.name for t in channel.threads]}")
             for thread in channel.threads:
                 if thread.name.lower() == series_lower:
-                    print(f"[get_series_channel] FORUM THREAD BULUNDU: {thread.name}")
+                    print(f"[get_series_channel] FORUM THREAD BULUNDU (cache): {thread.name}")
                     return thread
+            
+            # Aktif thread'leri API'den çek
+            try:
+                active_threads = await guild.active_threads()
+                print(f"[get_series_channel] Aktif thread'ler: {[t.name for t in active_threads]}")
+                for thread in active_threads:
+                    if thread.parent_id == channel.id and thread.name.lower() == series_lower:
+                        print(f"[get_series_channel] FORUM THREAD BULUNDU (aktif): {thread.name}")
+                        return thread
+            except Exception as e:
+                print(f"[get_series_channel] Aktif thread hatası: {e}")
+            
             # Arşivlenmiş thread'leri de kontrol et
             try:
                 async for thread in channel.archived_threads(limit=100):
@@ -456,12 +470,21 @@ async def fetchUpdates():
             view.add_item(series_button)
 
             # ─────────────────────────────
-            # 5) Mesajları gönder (Her zaman iki kanala)
+            # 5) Mesajları gönder (İki kanala aynı anda)
             # ─────────────────────────────
             # 1. Ana kanala (CHANNEL_ID) @Tüm Seriler rolü ile gönder
-            # 2. Seri kanalı varsa oraya da @everyone ile gönder
+            # 2. Seri thread'i varsa oraya da @everyone ile gönder
             
-            # Tüm Seriler rolünü bul
+            # Önce seri thread'ini bul (async fonksiyon)
+            series_thread = None
+            try:
+                series_thread = await get_series_channel(channel.guild, manga_title)
+                if series_thread:
+                    print(f"[fetchUpdates] Seri thread bulundu: {series_thread.name}")
+            except Exception as e:
+                print(f"[fetchUpdates] Thread arama hatası: {e}")
+            
+            # 1. Ana kanala (CHANNEL_ID) gönder - @Tüm Seriler ile
             tum_seriler_mention = None
             try:
                 tum_seriler_role = discord.utils.get(channel.guild.roles, name="Tüm Seriler")
@@ -470,7 +493,6 @@ async def fetchUpdates():
             except Exception as e:
                 print(f"[fetchUpdates] Rol arama hatası: {e}")
             
-            # Ana kanala (CHANNEL_ID) gönder - @Tüm Seriler ile
             try:
                 if tum_seriler_mention:
                     msg = await channel.send(content=tum_seriler_mention, embed=embed, view=view)
@@ -481,20 +503,13 @@ async def fetchUpdates():
             except Exception as e:
                 print(f"[fetchUpdates] Ana kanal mesaj hatası: {e}")
             
-            # Seri kanalını bul (async fonksiyon)
-            try:
-                series_channel = await get_series_channel(channel.guild, manga_title)
-            except Exception as e:
-                print(f"[fetchUpdates] Kanal arama hatası: {e}")
-                series_channel = None
-            
-            # Seri kanalı varsa oraya da gönder - @everyone ile
-            if series_channel and series_channel.id != channel.id:
+            # 2. Seri thread'i varsa oraya da gönder - @everyone ile
+            if series_thread:
                 try:
-                    await series_channel.send(content="@everyone", embed=embed, view=view)
-                    print(f"[fetchUpdates] Seri kanalına mesaj gönderildi: #{series_channel.name}")
+                    await series_thread.send(content="@everyone", embed=embed, view=view)
+                    print(f"[fetchUpdates] Thread'e mesaj gönderildi: {series_thread.name}")
                 except Exception as e:
-                    print(f"[fetchUpdates] Seri kanalı mesaj hatası: {e}")
+                    print(f"[fetchUpdates] Thread mesaj hatası: {e}")
 
             client.lastPostTime = published  # type: ignore
 
