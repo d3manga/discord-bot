@@ -331,18 +331,19 @@ async def seriler(ctx):
             labels = item.get("labels", [])
             content = item.get("content", "")
             
-            # Durum ve tür bilgisi
+            # Durum bilgisi
+            # Durum ve canlı renkler
             status = "📖 Devam Ediyor"
-            status_color = 0x3498db  # Mavi
+            embed_color = 0x00BFFF  # Parlak mavi (varsayılan)
             if "Devam ediyor" in labels:
                 status = "🟢 Devam Ediyor"
-                status_color = 0x2ecc71  # Yeşil
+                embed_color = 0x00FF7F  # Parlak yeşil
             elif "Tamamlandı" in labels:
                 status = "✅ Tamamlandı"
-                status_color = 0x9b59b6  # Mor
+                embed_color = 0xFFD700  # Altın sarısı
             elif "Bırakıldı" in labels:
                 status = "❌ Bırakıldı"
-                status_color = 0xe74c3c  # Kırmızı
+                embed_color = 0xFF4500  # Parlak kırmızı-turuncu
             
             # Kapak resmini al
             cover_img = extract_first_image_src(content)
@@ -356,17 +357,14 @@ async def seriler(ctx):
             if len(genre_text) > 30:
                 genre_text = genre_text[:27] + "..."
             
-            # Embed oluştur - Compact ve uniform tasarım
+            # Embed oluştur - Compact tasarım (thumbnail ile)
             embed = discord.Embed(
                 title=f"{title}",
-                color=status_color,
+                description=f"{status} • {genre_text}",
+                color=embed_color,
             )
             
-            # Field'lar ile sabit düzen (her zaman aynı boyut)
-            embed.add_field(name="Durum", value=status, inline=True)
-            embed.add_field(name="Türler", value=genre_text, inline=True)
-            
-            # Küçük kare thumbnail (sağ tarafta, sabit boyut)
+            # Küçük thumbnail (compact için)
             if cover_img:
                 embed.set_thumbnail(url=cover_img)
             
@@ -397,8 +395,99 @@ async def seriler(ctx):
         await ctx.send(f"📊 Toplam **{len(items)}** seri listelendi!")
         
     except Exception as e:
-        print(f"[tumseriler] Hata: {e}")
+        print(f"[seriler] Hata: {e}")
         await ctx.send("❌ Seriler yüklenirken hata oluştu.")
+
+
+# ───────────────────────────────────────────────
+# ++seri KOMUTU - Tek seri göster
+# ───────────────────────────────────────────────
+@client.command()
+async def seri(ctx, *, seri_adi: str = None):
+    """Belirtilen seriyi gösterir. Kullanım: ++seri Deathcord"""
+    if not seri_adi:
+        await ctx.send("❌ Kullanım: `++seri <seri adı>`\nÖrnek: `++seri Deathcord`")
+        return
+    
+    try:
+        # Blogger API'den seri ara (Series etiketli + seri adı)
+        labels = f"{seri_adi},Series"
+        url = (f"https://www.googleapis.com/blogger/v3/blogs/"
+               f"{BLOG_ID}/posts?labels={labels}&maxResults=1&key={BLOGGER_API_KEY}")
+        data = requests.get(url).json()
+        
+        items = data.get("items", [])
+        
+        if not items:
+            await ctx.send(f"❌ **{seri_adi}** adında seri bulunamadı.")
+            return
+        
+        item = items[0]
+        title = item.get("title", "Bilinmeyen")
+        post_url = item.get("url", "#")
+        labels_list = item.get("labels", [])
+        content = item.get("content", "")
+        
+        # Durum ve canlı renkler
+        status = "📖 Devam Ediyor"
+        embed_color = 0x00BFFF  # Parlak mavi (varsayılan)
+        if "Devam ediyor" in labels_list:
+            status = "🟢 Devam Ediyor"
+            embed_color = 0x00FF7F  # Parlak yeşil
+        elif "Tamamlandı" in labels_list:
+            status = "✅ Tamamlandı"
+            embed_color = 0xFFD700  # Altın sarısı
+        elif "Bırakıldı" in labels_list:
+            status = "❌ Bırakıldı"
+            embed_color = 0xFF4500  # Parlak kırmızı-turuncu
+        
+        # Kapak resmini al
+        cover_img = extract_first_image_src(content)
+        
+        # Türleri filtrele
+        skip_labels = {"series", "devam ediyor", "tamamlandı", "bırakıldı", "chapter"}
+        genres = [l for l in labels_list if l.lower() not in skip_labels and l != title]
+        genre_text = " • ".join(genres[:5]) if genres else "—"
+        
+        # Embed oluştur - Detaylı tasarım
+        embed = discord.Embed(
+            title=f"📚 {title}",
+            description=f"**{status}**\n\n🏷️ {genre_text}",
+            color=embed_color,
+        )
+        
+        # Büyük kapak resmi
+        if cover_img:
+            embed.set_image(url=cover_img)
+        
+        embed.set_footer(
+            text="D3 Manga • ++seri",
+            icon_url="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjb6KH5VdssQRFuN8X1CPZs1y7B2gCnBQfb0YMx4PqsqPioba6vm2SK2-wNvx-1Vc2N5Lkdr7iCo03CXnP6UWsTLwxr8IBY3hl-102Q_vZNIXdYVj7aeTUGqv8it8XmPmDN3wIb1Z6bTEWwOyFDB7zLkLoMW7gk5feZfAcQzSPnIl-AYkvPY6y0xAsM3JnY/s1600/dragon%20%282%29.png"
+        )
+        
+        # Butonlar
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(
+            label="📚 Seriye Git",
+            style=discord.ButtonStyle.link,
+            url=post_url
+        ))
+        
+        # Thread butonu
+        series_thread = await get_series_channel(ctx.guild, title)
+        if series_thread:
+            thread_url = f"https://discord.com/channels/{ctx.guild.id}/{series_thread.id}"
+            view.add_item(discord.ui.Button(
+                label="💬 Duyurular",
+                style=discord.ButtonStyle.link,
+                url=thread_url
+            ))
+        
+        await ctx.send(embed=embed, view=view)
+        
+    except Exception as e:
+        print(f"[seri] Hata: {e}")
+        await ctx.send("❌ Seri yüklenirken hata oluştu.")
 
 
 # ───────────────────────────────────────────────
