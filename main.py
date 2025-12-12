@@ -366,7 +366,7 @@ async def fetchUpdates():
             # 4) Embed oluştur (Yeni tasarım)
             # ─────────────────────────────
             embed = discord.Embed(
-                title=f"� {manBga_title}",
+                title=f"� {manga_title}",
                 description=f"**Bölüm {chapter_number}** yayınlandı!\n\n"
                            f"━━━━━━━━━━━━━━━━━━━━━━",
                 color=random.choice(EMBED_COLORS),  # Rastgele renk
