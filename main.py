@@ -322,18 +322,29 @@ async def fetchUpdates():
             # 1) Manga adını label’den al
             # ─────────────────────────────
             manga_title = None
+            # Atlanacak etiketler (genel kategoriler)
+            skip_labels = {
+                "chapter", "series", "devam ediyor", "tamamlandı", "bırakıldı",
+                "dram", "korku", "gizem", "psikoloji", "shounen", "shoujo",
+                "seinen", "josei", "aksiyon", "macera", "komedi", "romantik",
+                "fantastik", "bilim kurgu", "spor", "müzik", "okul", "günlük yaşam"
+            }
             for label in labels:
                 low = label.lower()
-                if low == "chapter":
+                if low in skip_labels:
                     continue
                 if low.replace(" ", "").isdigit():
                     continue
                 if low.startswith("chapter"):
                     continue
+                # İlk uygun etiketi al ve çık
                 manga_title = label
+                break
 
             if manga_title is None:
                 manga_title = "Bilinmeyen Seri"
+            
+            print(f"[fetchUpdates] Manga title: {manga_title}, Labels: {labels}")
 
             # ─────────────────────────────
             # 2) Bölüm numarası
