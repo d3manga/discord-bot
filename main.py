@@ -302,6 +302,89 @@ async def search(ctx, *, arg):
 
 
 # ───────────────────────────────────────────────
+# ++tumseriler KOMUTU - Tüm serileri listele
+# ───────────────────────────────────────────────
+@client.command()
+async def tumseriler(ctx):
+    """Blogger'daki tüm serileri listeler (Series etiketli postlar)"""
+    try:
+        loading_msg = await ctx.send("📚 Seriler yükleniyor...")
+        
+        # Blogger API'den "Series" etiketli tüm postları çek
+        url = (f"https://www.googleapis.com/blogger/v3/blogs/"
+               f"{BLOG_ID}/posts?labels=Series&maxResults=50&key={BLOGGER_API_KEY}")
+        data = requests.get(url).json()
+        
+        items = data.get("items", [])
+        
+        if not items:
+            await loading_msg.edit(content="❌ Hiç seri bulunamadı.")
+            return
+        
+        # Her seri için ayrı embed gönder
+        await loading_msg.delete()
+        
+        for item in items:
+            title = item.get("title", "Bilinmeyen")
+            post_url = item.get("url", "#")
+            labels = item.get("labels", [])
+            content = item.get("content", "")
+            
+            # Durum ve tür bilgisi
+            status = "📖 Devam Ediyor"
+            status_color = 0x3498db  # Mavi
+            if "Devam ediyor" in labels:
+                status = "🟢 Devam Ediyor"
+                status_color = 0x2ecc71  # Yeşil
+            elif "Tamamlandı" in labels:
+                status = "✅ Tamamlandı"
+                status_color = 0x9b59b6  # Mor
+            elif "Bırakıldı" in labels:
+                status = "❌ Bırakıldı"
+                status_color = 0xe74c3c  # Kırmızı
+            
+            # Kapak resmini al
+            cover_img = extract_first_image_src(content)
+            
+            # Türleri filtrele
+            skip_labels = {"series", "devam ediyor", "tamamlandı", "bırakıldı", "chapter"}
+            genres = [l for l in labels if l.lower() not in skip_labels and l != title]
+            genre_text = " • ".join(genres[:5]) if genres else "Belirtilmemiş"
+            
+            # Embed oluştur
+            embed = discord.Embed(
+                title=f"📖 {title}",
+                description=f"**Durum:** {status}\n**Türler:** {genre_text}\n\n━━━━━━━━━━━━━━━━━━━━━━",
+                color=status_color,
+            )
+            
+            if cover_img:
+                embed.set_thumbnail(url=cover_img)
+            
+            embed.set_footer(
+                text="D3 Manga",
+                icon_url="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjb6KH5VdssQRFuN8X1CPZs1y7B2gCnBQfb0YMx4PqsqPioba6vm2SK2-wNvx-1Vc2N5Lkdr7iCo03CXnP6UWsTLwxr8IBY3hl-102Q_vZNIXdYVj7aeTUGqv8it8XmPmDN3wIb1Z6bTEWwOyFDB7zLkLoMW7gk5feZfAcQzSPnIl-AYkvPY6y0xAsM3JnY/s1600/dragon%20%282%29.png"
+            )
+            
+            # Buton ekle
+            view = discord.ui.View()
+            view.add_item(discord.ui.Button(
+                label="📚 Seriye Git",
+                style=discord.ButtonStyle.link,
+                url=post_url
+            ))
+            
+            await ctx.send(embed=embed, view=view)
+        
+        # Özet mesajı
+        await ctx.send(f"📊 Toplam **{len(items)}** seri listelendi!")
+        
+    except Exception as e:
+        print(f"[tumseriler] Hata: {e}")
+        await ctx.send("❌ Seriler yüklenirken hata oluştu.")
+
+
+# ───────────────────────────────────────────────
 # FETCH UPDATES – YENİ BÖLÜM TAKİBİ
 # ───────────────────────────────────────────────
 # Global değişken olarak son post zamanını tutuyoruz
