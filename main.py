@@ -105,7 +105,8 @@ async def get_series_channel(guild: discord.Guild, series_name: str):
                 active_threads = await guild.active_threads()
                 print(f"[get_series_channel] Aktif thread'ler: {[t.name for t in active_threads]}")
                 for thread in active_threads:
-                    if thread.parent_id == channel.id and thread.name.lower() == series_lower:
+                    print(f"[get_series_channel] Thread kontrol: '{thread.name.lower()}' == '{series_lower}' ?")
+                    if thread.name.lower() == series_lower:
                         print(f"[get_series_channel] FORUM THREAD BULUNDU (aktif): {thread.name}")
                         return thread
             except Exception as e:
