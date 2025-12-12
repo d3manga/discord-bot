@@ -60,17 +60,18 @@ sent_messages = {}
 # ───────────────────────────────────────────────
 # SERİ KANALI BULAN FONKSİYON
 # ───────────────────────────────────────────────
-def get_series_channel(guild: discord.Guild, series_name: str) -> discord.TextChannel | None:
+async def get_series_channel(guild: discord.Guild, series_name: str):
     """
-    Discord sunucusunda seri ismiyle eşleşen kanalı bulur.
+    Discord sunucusunda seri ismiyle eşleşen kanalı veya thread'i bulur.
     Case-insensitive exact matching yapar.
+    Önce text channel'lara, sonra forum thread'lerine bakar.
     
     Args:
         guild: Discord sunucusu
         series_name: Blogger'dan gelen seri etiketi
     
     Returns:
-        Eşleşen text channel veya None
+        Eşleşen channel/thread veya None
     
     Requirements: 1.1, 1.4, 2.1, 2.3
     """
@@ -79,14 +80,33 @@ def get_series_channel(guild: discord.Guild, series_name: str) -> discord.TextCh
     
     series_lower = series_name.lower()
     print(f"[get_series_channel] Aranan seri: '{series_name}' -> '{series_lower}'")
-    print(f"[get_series_channel] Mevcut kanallar: {[ch.name for ch in guild.text_channels]}")
     
+    # 1. Önce text channel'lara bak
+    print(f"[get_series_channel] Mevcut kanallar: {[ch.name for ch in guild.text_channels]}")
     for channel in guild.text_channels:
         if channel.name.lower() == series_lower:
-            print(f"[get_series_channel] EŞLEŞME BULUNDU: #{channel.name}")
+            print(f"[get_series_channel] TEXT CHANNEL BULUNDU: #{channel.name}")
             return channel
     
-    print(f"[get_series_channel] Eşleşen kanal bulunamadı")
+    # 2. Forum kanallarındaki thread'lere bak
+    for channel in guild.channels:
+        if isinstance(channel, discord.ForumChannel):
+            print(f"[get_series_channel] Forum kanalı bulundu: {channel.name}")
+            # Aktif thread'leri kontrol et
+            for thread in channel.threads:
+                if thread.name.lower() == series_lower:
+                    print(f"[get_series_channel] FORUM THREAD BULUNDU: {thread.name}")
+                    return thread
+            # Arşivlenmiş thread'leri de kontrol et
+            try:
+                async for thread in channel.archived_threads(limit=100):
+                    if thread.name.lower() == series_lower:
+                        print(f"[get_series_channel] ARŞİVLENMİŞ THREAD BULUNDU: {thread.name}")
+                        return thread
+            except Exception as e:
+                print(f"[get_series_channel] Arşiv thread hatası: {e}")
+    
+    print(f"[get_series_channel] Eşleşen kanal/thread bulunamadı")
     return None
 
 
@@ -461,9 +481,9 @@ async def fetchUpdates():
             except Exception as e:
                 print(f"[fetchUpdates] Ana kanal mesaj hatası: {e}")
             
-            # Seri kanalını bul
+            # Seri kanalını bul (async fonksiyon)
             try:
-                series_channel = get_series_channel(channel.guild, manga_title)
+                series_channel = await get_series_channel(channel.guild, manga_title)
             except Exception as e:
                 print(f"[fetchUpdates] Kanal arama hatası: {e}")
                 series_channel = None
