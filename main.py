@@ -350,14 +350,21 @@ async def seriler(ctx):
             # Türleri filtrele
             skip_labels = {"series", "devam ediyor", "tamamlandı", "bırakıldı", "chapter"}
             genres = [l for l in labels if l.lower() not in skip_labels and l != title]
-            genre_text = " • ".join(genres[:5]) if genres else "Belirtilmemiş"
+            # Maksimum 3 tür göster, sabit genişlik için
+            genre_text = " • ".join(genres[:3]) if genres else "—"
+            # Tür metnini 30 karakterle sınırla
+            if len(genre_text) > 30:
+                genre_text = genre_text[:27] + "..."
             
-            # Embed oluştur - Compact tasarım (thumbnail ile)
+            # Embed oluştur - Compact ve uniform tasarım
             embed = discord.Embed(
                 title=f"{title}",
-                description=f"{status}\n🏷️ {genre_text}",
                 color=status_color,
             )
+            
+            # Field'lar ile sabit düzen (her zaman aynı boyut)
+            embed.add_field(name="Durum", value=status, inline=True)
+            embed.add_field(name="Türler", value=genre_text, inline=True)
             
             # Küçük kare thumbnail (sağ tarafta, sabit boyut)
             if cover_img:
