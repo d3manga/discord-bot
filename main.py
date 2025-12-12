@@ -302,11 +302,12 @@ async def search(ctx, *, arg):
 
 
 # ───────────────────────────────────────────────
-# ++tumseriler KOMUTU - Tüm serileri listele
+# ++tumseriler KOMUTU - Tüm serileri listele (Sadece yöneticiler)
 # ───────────────────────────────────────────────
 @client.command()
-async def tumseriler(ctx):
-    """Blogger'daki tüm serileri listeler (Series etiketli postlar)"""
+@commands.has_permissions(administrator=True)
+async def seriler(ctx):
+    """Blogger'daki tüm serileri listeler (Series etiketli postlar) - Sadece yöneticiler"""
     try:
         loading_msg = await ctx.send("📚 Seriler yükleniyor...")
         
@@ -351,28 +352,45 @@ async def tumseriler(ctx):
             genres = [l for l in labels if l.lower() not in skip_labels and l != title]
             genre_text = " • ".join(genres[:5]) if genres else "Belirtilmemiş"
             
-            # Embed oluştur
+            # Embed oluştur - Büyük kapak resimli tasarım
             embed = discord.Embed(
-                title=f"📖 {title}",
-                description=f"**Durum:** {status}\n**Türler:** {genre_text}\n\n━━━━━━━━━━━━━━━━━━━━━━",
+                title=f"{title}",
                 color=status_color,
             )
             
+            # Field'lar ile düzenli görünüm
+            embed.add_field(name="📊 Durum", value=status, inline=True)
+            embed.add_field(name="🏷️ Türler", value=genre_text, inline=True)
+            
+            # Büyük kapak resmi
             if cover_img:
-                embed.set_thumbnail(url=cover_img)
+                embed.set_image(url=cover_img)
             
             embed.set_footer(
-                text="D3 Manga",
+                text="D3 Manga • ++seriler",
                 icon_url="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjb6KH5VdssQRFuN8X1CPZs1y7B2gCnBQfb0YMx4PqsqPioba6vm2SK2-wNvx-1Vc2N5Lkdr7iCo03CXnP6UWsTLwxr8IBY3hl-102Q_vZNIXdYVj7aeTUGqv8it8XmPmDN3wIb1Z6bTEWwOyFDB7zLkLoMW7gk5feZfAcQzSPnIl-AYkvPY6y0xAsM3JnY/s1600/dragon%20%282%29.png"
             )
             
-            # Buton ekle
+            # Butonlar ekle
             view = discord.ui.View()
+            
+            # Seriye Git butonu
             view.add_item(discord.ui.Button(
                 label="📚 Seriye Git",
                 style=discord.ButtonStyle.link,
                 url=post_url
             ))
+            
+            # Thread'i bul ve buton ekle
+            series_thread = await get_series_channel(ctx.guild, title)
+            if series_thread:
+                # Discord thread URL'si
+                thread_url = f"https://discord.com/channels/{ctx.guild.id}/{series_thread.id}"
+                view.add_item(discord.ui.Button(
+                    label="💬 Duyurular",
+                    style=discord.ButtonStyle.link,
+                    url=thread_url
+                ))
             
             await ctx.send(embed=embed, view=view)
         
@@ -495,7 +513,7 @@ async def fetchUpdates():
             # 4) Embed oluştur (Yeni tasarım)
             # ─────────────────────────────
             embed = discord.Embed(
-                title=f"� {manga_title}",
+                title=f"📖 {manga_title}",
                 description=f"**Bölüm {chapter_number}** yayınlandı!\n\n"
                            f"━━━━━━━━━━━━━━━━━━━━━━",
                 color=random.choice(EMBED_COLORS),  # Rastgele renk
