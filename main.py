@@ -83,8 +83,16 @@ async def get_or_create_series_thread(guild: discord.Guild, series_name: str, co
     
     # Forum kanalını bul
     forum_channel = guild.get_channel(FORUM_CHANNEL_ID)
-    if not forum_channel or not isinstance(forum_channel, discord.ForumChannel):
-        print(f"[get_or_create_series_thread] Forum kanalı bulunamadı: {FORUM_CHANNEL_ID}")
+    print(f"[get_or_create_series_thread] Forum kanalı aranıyor: {FORUM_CHANNEL_ID}")
+    print(f"[get_or_create_series_thread] Bulunan kanal: {forum_channel}, Tip: {type(forum_channel)}")
+    
+    if not forum_channel:
+        print(f"[get_or_create_series_thread] Forum kanalı bulunamadı!")
+        return None
+    
+    # ForumChannel değilse thread oluşturamayız
+    if not isinstance(forum_channel, discord.ForumChannel):
+        print(f"[get_or_create_series_thread] Kanal forum değil, tip: {type(forum_channel)}")
         return None
     
     series_lower = series_name.lower()
@@ -448,23 +456,45 @@ async def seriler(ctx):
             # Kapak resmini al
             cover_img = extract_first_image_src(content)
             
+            # Özet al (id="syn_bod" olan p etiketinden)
+            summary = ""
+            syn_match = re.search(r'<p[^>]*id="syn_bod"[^>]*>(.*?)</p>', content, re.DOTALL)
+            if syn_match:
+                summary = re.sub(r'<[^>]+>', '', syn_match.group(1))  # HTML taglarını kaldır
+                summary = summary.strip()[:150]
+                if len(summary) == 150:
+                    summary = summary[:147] + "..."
+            
             # Türleri filtrele
             skip_labels = {"series", "devam ediyor", "tamamlandı", "bırakıldı", "chapter"}
             genres = [l for l in labels if l.lower() not in skip_labels and l != title]
-            # Maksimum 3 tür göster, sabit genişlik için
-            genre_text = " • ".join(genres[:3]) if genres else "—"
-            # Tür metnini 30 karakterle sınırla
-            if len(genre_text) > 30:
-                genre_text = genre_text[:27] + "..."
+            genre_text = " • ".join(genres[:4]) if genres else "—"
             
-            # Embed oluştur - Compact tasarım (thumbnail ile)
+            # Embed oluştur - Tablo formatında durum/türler
+            # Durum kısa hali
+            if "🟢" in status or "Devam" in status:
+                status_short = "🟢 Devam"
+            elif "✅" in status or "Tamamlandı" in status:
+                status_short = "✅ Bitti"
+            elif "❌" in status or "Bırakıldı" in status:
+                status_short = "❌ Bırakıldı"
+            else:
+                status_short = "📖 Devam"
+            
+            # Türleri virgülle ayır
+            genre_comma = ", ".join(genres[:3]) if genres else "—"
+            
+            desc_parts = [f"**Durum**          **Türler**\n{status_short}       {genre_comma}"]
+            if summary:
+                desc_parts.insert(0, f"**Özet;**\n{summary}\n")
+            
             embed = discord.Embed(
                 title=f"{title}",
-                description=f"{status} • {genre_text}",
+                description="\n".join(desc_parts),
                 color=embed_color,
             )
             
-            # Küçük thumbnail (compact için)
+            # Küçük thumbnail
             if cover_img:
                 embed.set_thumbnail(url=cover_img)
             
@@ -781,14 +811,25 @@ async def fetchUpdates():
             thread_genres = [l for l in labels if l.lower() not in genre_skip and l != manga_title]
             thread_genres_text = " • ".join(thread_genres[:3]) if thread_genres else None
             
+            # Önce eski fonksiyonla thread'i bul
+            series_thread = None
             try:
-                series_thread = await get_or_create_series_thread(
-                    channel.guild, manga_title, cover_image, thread_status, thread_genres_text
-                )
+                series_thread = await get_series_channel(channel.guild, manga_title)
                 if series_thread:
-                    print(f"[fetchUpdates] Seri thread hazır: {series_thread.name}")
+                    print(f"[fetchUpdates] Mevcut thread bulundu: {series_thread.name}")
             except Exception as e:
-                print(f"[fetchUpdates] Thread oluşturma/bulma hatası: {e}")
+                print(f"[fetchUpdates] Thread arama hatası: {e}")
+            
+            # Thread yoksa yeni oluştur
+            if not series_thread:
+                try:
+                    series_thread = await get_or_create_series_thread(
+                        channel.guild, manga_title, cover_image, thread_status, thread_genres_text
+                    )
+                    if series_thread:
+                        print(f"[fetchUpdates] Yeni thread oluşturuldu: {series_thread.name}")
+                except Exception as e:
+                    print(f"[fetchUpdates] Thread oluşturma hatası: {e}")
             
             # 1. Ana kanala (CHANNEL_ID) gönder - @Tüm Seriler ile
             tum_seriler_mention = None
