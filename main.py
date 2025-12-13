@@ -479,7 +479,7 @@ async def seriler(ctx):
             genres = [l for l in labels if l.lower() not in skip_labels and l != title]
             genre_text = " • ".join(genres[:4]) if genres else "—"
             
-            # Embed oluştur - Tablo formatında durum/türler
+            # Embed oluştur - Field'larla durum/türler
             # Durum kısa hali
             if "🟢" in status or "Devam" in status:
                 status_short = "🟢 Devam"
@@ -493,15 +493,18 @@ async def seriler(ctx):
             # Türleri virgülle ayır
             genre_comma = ", ".join(genres[:3]) if genres else "—"
             
-            desc_parts = [f"**Durum**                    **Türler**\n{status_short}              {genre_comma}"]
-            if summary:
-                desc_parts.insert(0, f"**Özet;**\n{summary}\n")
+            # Description sadece özet
+            desc_text = f"**Özet;**\n{summary}" if summary else ""
             
             embed = discord.Embed(
                 title=f"{title}",
-                description="\n".join(desc_parts),
+                description=desc_text,
                 color=embed_color,
             )
+            
+            # Field'lar ekle - yan yana
+            embed.add_field(name="Durum", value=status_short, inline=True)
+            embed.add_field(name="Türler", value=genre_comma, inline=True)
             
             # Küçük thumbnail
             if cover_img:
