@@ -47,7 +47,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 BLOGGER_API_KEY = os.getenv("BLOGGER_API_KEY", "")
 BLOG_ID = os.getenv("BLOG_ID", "")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
-FORUM_CHANNEL_ID = int(os.getenv("FORUM_CHANNEL_ID", "1449141950723784704"))
+SERIES_THREAD_CHANNEL_ID = int(os.getenv("SERIES_THREAD_CHANNEL_ID", "1449141950723784704"))  # Seri thread'lerinin açılacağı kanal
 NOTIFICATION_ROLE_ID = os.getenv("NOTIFICATION_ROLE_ID", "")
 
 # Blogger API client
@@ -66,11 +66,12 @@ completed_series = set()
 # ───────────────────────────────────────────────
 async def get_or_create_series_thread(guild: discord.Guild, series_name: str, cover_img: str = None, status: str = None, genres: str = None):
     """
-    Forum kanalında seri için thread bulur veya oluşturur.
+    Text channel altında seri için thread bulur veya oluşturur.
+    SERIES_THREAD_CHANNEL_ID altında seri adıyla thread açar.
     
     Args:
         guild: Discord sunucusu
-        series_name: Seri adı
+        series_name: Seri adı (etiket adı)
         cover_img: Kapak resmi URL'si (opsiyonel)
         status: Durum bilgisi (opsiyonel)
         genres: Türler (opsiyonel)
@@ -81,33 +82,29 @@ async def get_or_create_series_thread(guild: discord.Guild, series_name: str, co
     if not series_name:
         return None
     
-    # Forum kanalını bul
-    forum_channel = guild.get_channel(FORUM_CHANNEL_ID)
-    print(f"[get_or_create_series_thread] Forum kanalı aranıyor: {FORUM_CHANNEL_ID}")
-    print(f"[get_or_create_series_thread] Bulunan kanal: {forum_channel}, Tip: {type(forum_channel)}")
+    # Text kanalını bul
+    parent_channel = guild.get_channel(SERIES_THREAD_CHANNEL_ID)
+    print(f"[get_or_create_series_thread] Kanal aranıyor: {SERIES_THREAD_CHANNEL_ID}")
+    print(f"[get_or_create_series_thread] Bulunan kanal: {parent_channel}, Tip: {type(parent_channel)}")
     
-    if not forum_channel:
-        print(f"[get_or_create_series_thread] Forum kanalı bulunamadı!")
-        return None
-    
-    # ForumChannel değilse thread oluşturamayız
-    if not isinstance(forum_channel, discord.ForumChannel):
-        print(f"[get_or_create_series_thread] Kanal forum değil, tip: {type(forum_channel)}")
+    if not parent_channel:
+        print(f"[get_or_create_series_thread] Kanal bulunamadı!")
         return None
     
     series_lower = series_name.lower()
     
-    # Önce mevcut thread'leri kontrol et
-    for thread in forum_channel.threads:
-        if thread.name.lower() == series_lower:
-            print(f"[get_or_create_series_thread] Mevcut thread bulundu: {thread.name}")
-            return thread
+    # Önce mevcut thread'leri kontrol et (cache)
+    if hasattr(parent_channel, 'threads'):
+        for thread in parent_channel.threads:
+            if thread.name.lower() == series_lower:
+                print(f"[get_or_create_series_thread] Mevcut thread bulundu (cache): {thread.name}")
+                return thread
     
     # Aktif thread'leri API'den çek
     try:
         active_threads = await guild.active_threads()
         for thread in active_threads:
-            if thread.parent_id == FORUM_CHANNEL_ID and thread.name.lower() == series_lower:
+            if thread.parent_id == SERIES_THREAD_CHANNEL_ID and thread.name.lower() == series_lower:
                 print(f"[get_or_create_series_thread] Aktif thread bulundu: {thread.name}")
                 return thread
     except Exception as e:
@@ -115,10 +112,11 @@ async def get_or_create_series_thread(guild: discord.Guild, series_name: str, co
     
     # Arşivlenmiş thread'leri kontrol et
     try:
-        async for thread in forum_channel.archived_threads(limit=100):
-            if thread.name.lower() == series_lower:
-                print(f"[get_or_create_series_thread] Arşivlenmiş thread bulundu: {thread.name}")
-                return thread
+        if hasattr(parent_channel, 'archived_threads'):
+            async for thread in parent_channel.archived_threads(limit=100):
+                if thread.name.lower() == series_lower:
+                    print(f"[get_or_create_series_thread] Arşivlenmiş thread bulundu: {thread.name}")
+                    return thread
     except Exception as e:
         print(f"[get_or_create_series_thread] Arşiv thread hatası: {e}")
     
@@ -142,23 +140,34 @@ async def get_or_create_series_thread(guild: discord.Guild, series_name: str, co
             desc_parts.append(f"🏷️ {genres}")
         desc_parts.append("Yeni bölümler burada paylaşılacak!")
         
-        # İlk mesaj için compact embed oluştur
+        # İlk mesaj için embed oluştur
         embed = discord.Embed(
             title=f"📚 {series_name}",
             description="\n".join(desc_parts),
             color=embed_color,
         )
-        # Küçük thumbnail (compact görünüm)
         if cover_img:
             embed.set_thumbnail(url=cover_img)
         
-        # Forum'da yeni thread oluştur
-        thread_with_message = await forum_channel.create_thread(
-            name=series_name,
-            embed=embed,
-        )
-        print(f"[get_or_create_series_thread] Yeni thread oluşturuldu: {series_name}")
-        return thread_with_message.thread
+        # TextChannel altında thread oluştur
+        if isinstance(parent_channel, discord.TextChannel):
+            # Önce bir mesaj gönder, sonra o mesajdan thread oluştur
+            msg = await parent_channel.send(embed=embed)
+            thread = await msg.create_thread(name=series_name)
+            print(f"[get_or_create_series_thread] Yeni thread oluşturuldu: {series_name}")
+            return thread
+        # ForumChannel ise eski yöntem
+        elif isinstance(parent_channel, discord.ForumChannel):
+            thread_with_message = await parent_channel.create_thread(
+                name=series_name,
+                embed=embed,
+            )
+            print(f"[get_or_create_series_thread] Forum thread oluşturuldu: {series_name}")
+            return thread_with_message.thread
+        else:
+            print(f"[get_or_create_series_thread] Desteklenmeyen kanal tipi: {type(parent_channel)}")
+            return None
+            
     except Exception as e:
         print(f"[get_or_create_series_thread] Thread oluşturma hatası: {e}")
         return None
