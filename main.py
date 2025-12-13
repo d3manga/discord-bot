@@ -47,6 +47,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 BLOGGER_API_KEY = os.getenv("BLOGGER_API_KEY", "")
 BLOG_ID = os.getenv("BLOG_ID", "")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
+FORUM_CHANNEL_ID = int(os.getenv("FORUM_CHANNEL_ID", "1449141950723784704"))
 NOTIFICATION_ROLE_ID = os.getenv("NOTIFICATION_ROLE_ID", "")
 
 # Blogger API client
@@ -55,6 +56,104 @@ blog = build("blogger", "v3", developerKey=BLOGGER_API_KEY)
 # Discord’a gönderilen duyuru mesajlarını RAM’de tutacağız:
 # {blog_post_id: discord_message_id}
 sent_messages = {}
+
+# Tamamlanan serileri takip et (tekrar mesaj atmasın)
+completed_series = set()
+
+
+# ───────────────────────────────────────────────
+# THREAD OLUŞTUR VEYA BUL FONKSİYONU
+# ───────────────────────────────────────────────
+async def get_or_create_series_thread(guild: discord.Guild, series_name: str, cover_img: str = None, status: str = None, genres: str = None):
+    """
+    Forum kanalında seri için thread bulur veya oluşturur.
+    
+    Args:
+        guild: Discord sunucusu
+        series_name: Seri adı
+        cover_img: Kapak resmi URL'si (opsiyonel)
+        status: Durum bilgisi (opsiyonel)
+        genres: Türler (opsiyonel)
+    
+    Returns:
+        Thread objesi veya None
+    """
+    if not series_name:
+        return None
+    
+    # Forum kanalını bul
+    forum_channel = guild.get_channel(FORUM_CHANNEL_ID)
+    if not forum_channel or not isinstance(forum_channel, discord.ForumChannel):
+        print(f"[get_or_create_series_thread] Forum kanalı bulunamadı: {FORUM_CHANNEL_ID}")
+        return None
+    
+    series_lower = series_name.lower()
+    
+    # Önce mevcut thread'leri kontrol et
+    for thread in forum_channel.threads:
+        if thread.name.lower() == series_lower:
+            print(f"[get_or_create_series_thread] Mevcut thread bulundu: {thread.name}")
+            return thread
+    
+    # Aktif thread'leri API'den çek
+    try:
+        active_threads = await guild.active_threads()
+        for thread in active_threads:
+            if thread.parent_id == FORUM_CHANNEL_ID and thread.name.lower() == series_lower:
+                print(f"[get_or_create_series_thread] Aktif thread bulundu: {thread.name}")
+                return thread
+    except Exception as e:
+        print(f"[get_or_create_series_thread] Aktif thread hatası: {e}")
+    
+    # Arşivlenmiş thread'leri kontrol et
+    try:
+        async for thread in forum_channel.archived_threads(limit=100):
+            if thread.name.lower() == series_lower:
+                print(f"[get_or_create_series_thread] Arşivlenmiş thread bulundu: {thread.name}")
+                return thread
+    except Exception as e:
+        print(f"[get_or_create_series_thread] Arşiv thread hatası: {e}")
+    
+    # Thread bulunamadı, yeni oluştur
+    try:
+        # Durum rengi belirle
+        embed_color = 0x00BFFF  # Varsayılan mavi
+        if status:
+            if "Devam" in status:
+                embed_color = 0x00FF7F  # Yeşil
+            elif "Tamamlandı" in status:
+                embed_color = 0xFFD700  # Altın
+            elif "Bırakıldı" in status:
+                embed_color = 0xFF4500  # Kırmızı
+        
+        # Description oluştur
+        desc_parts = []
+        if status:
+            desc_parts.append(f"**{status}**")
+        if genres:
+            desc_parts.append(f"🏷️ {genres}")
+        desc_parts.append("Yeni bölümler burada paylaşılacak!")
+        
+        # İlk mesaj için compact embed oluştur
+        embed = discord.Embed(
+            title=f"📚 {series_name}",
+            description="\n".join(desc_parts),
+            color=embed_color,
+        )
+        # Küçük thumbnail (compact görünüm)
+        if cover_img:
+            embed.set_thumbnail(url=cover_img)
+        
+        # Forum'da yeni thread oluştur
+        thread_with_message = await forum_channel.create_thread(
+            name=series_name,
+            embed=embed,
+        )
+        print(f"[get_or_create_series_thread] Yeni thread oluşturuldu: {series_name}")
+        return thread_with_message.thread
+    except Exception as e:
+        print(f"[get_or_create_series_thread] Thread oluşturma hatası: {e}")
+        return None
 
 
 # ───────────────────────────────────────────────
@@ -263,6 +362,7 @@ def get_series_cover_by_label(series_name: str) -> str | None:
 async def on_ready():
     print("Bot aktif!")
     fetchUpdates.start()
+    checkCompletedSeries.start()
     await client.change_presence(activity=discord.Game(name="Manga Okuyor..."))
 
 
@@ -663,16 +763,32 @@ async def fetchUpdates():
             # 5) Mesajları gönder (İki kanala aynı anda)
             # ─────────────────────────────
             # 1. Ana kanala (CHANNEL_ID) @Tüm Seriler rolü ile gönder
-            # 2. Seri thread'i varsa oraya da @everyone ile gönder
+            # 2. Seri thread'i yoksa oluştur, varsa oraya @everyone ile gönder
             
-            # Önce seri thread'ini bul (async fonksiyon)
+            # Thread'i bul veya oluştur
             series_thread = None
+            # Durum ve türleri belirle (thread için)
+            thread_status = "📖 Devam Ediyor"
+            if "Devam ediyor" in labels:
+                thread_status = "🟢 Devam Ediyor"
+            elif "Tamamlandı" in labels:
+                thread_status = "✅ Tamamlandı"
+            elif "Bırakıldı" in labels:
+                thread_status = "❌ Bırakıldı"
+            
+            # Türleri filtrele
+            genre_skip = {"series", "devam ediyor", "tamamlandı", "bırakıldı", "chapter"}
+            thread_genres = [l for l in labels if l.lower() not in genre_skip and l != manga_title]
+            thread_genres_text = " • ".join(thread_genres[:3]) if thread_genres else None
+            
             try:
-                series_thread = await get_series_channel(channel.guild, manga_title)
+                series_thread = await get_or_create_series_thread(
+                    channel.guild, manga_title, cover_image, thread_status, thread_genres_text
+                )
                 if series_thread:
-                    print(f"[fetchUpdates] Seri thread bulundu: {series_thread.name}")
+                    print(f"[fetchUpdates] Seri thread hazır: {series_thread.name}")
             except Exception as e:
-                print(f"[fetchUpdates] Thread arama hatası: {e}")
+                print(f"[fetchUpdates] Thread oluşturma/bulma hatası: {e}")
             
             # 1. Ana kanala (CHANNEL_ID) gönder - @Tüm Seriler ile
             tum_seriler_mention = None
@@ -693,7 +809,7 @@ async def fetchUpdates():
             except Exception as e:
                 print(f"[fetchUpdates] Ana kanal mesaj hatası: {e}")
             
-            # 2. Seri thread'i varsa oraya da gönder - @everyone ile
+            # 2. Seri thread'ine gönder - @everyone ile
             if series_thread:
                 try:
                     await series_thread.send(content="@everyone", embed=embed, view=view)
@@ -724,6 +840,57 @@ async def fetchUpdates():
         # Bu en dış katman: NE OLURSA OLSUN loop ölmesin
         print("[fetchUpdates] Beklenmeyen genel hata:", e)
         traceback.print_exc()
+
+
+# ───────────────────────────────────────────────
+# SERİ TAMAMLANDI KONTROLÜ (Her 5 dakikada bir)
+# ───────────────────────────────────────────────
+@tasks.loop(minutes=5.0)
+async def checkCompletedSeries():
+    """Blogger'da tamamlanan serileri kontrol et ve thread'e mesaj at"""
+    global completed_series
+    
+    try:
+        # Blogger'dan tüm serileri çek
+        url = (f"https://www.googleapis.com/blogger/v3/blogs/"
+               f"{BLOG_ID}/posts?labels=Series&maxResults=50&key={BLOGGER_API_KEY}")
+        data = requests.get(url).json()
+        
+        items = data.get("items", [])
+        if not items:
+            return
+        
+        # Guild'i bul
+        for guild in client.guilds:
+            for item in items:
+                title = item.get("title", "")
+                labels = item.get("labels", [])
+                
+                # Tamamlandı etiketi var mı?
+                if "Tamamlandı" in labels and title not in completed_series:
+                    # Thread'i bul
+                    series_thread = await get_or_create_series_thread(guild, title)
+                    
+                    if series_thread:
+                        # Tamamlandı mesajı gönder
+                        embed = discord.Embed(
+                            title="🎉 Seri Tamamlandı!",
+                            description=f"**{title}** serisi tamamlandı!\n\nTüm bölümleri okuduğunuz için teşekkürler! 💖",
+                            color=0xFFD700,  # Altın sarısı
+                        )
+                        embed.set_footer(text="D3 Manga")
+                        
+                        try:
+                            await series_thread.send(content="@everyone", embed=embed)
+                            print(f"[checkCompletedSeries] Tamamlandı mesajı gönderildi: {title}")
+                        except Exception as e:
+                            print(f"[checkCompletedSeries] Mesaj hatası: {e}")
+                    
+                    # Listeye ekle (tekrar mesaj atmasın)
+                    completed_series.add(title)
+                    
+    except Exception as e:
+        print(f"[checkCompletedSeries] Hata: {e}")
 
 
 # ───────────────────────────────────────────────
