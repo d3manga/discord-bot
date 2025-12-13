@@ -484,7 +484,7 @@ async def seriler(ctx):
             # Türleri virgülle ayır
             genre_comma = ", ".join(genres[:3]) if genres else "—"
             
-            desc_parts = [f"**Durum**          **Türler**\n{status_short}       {genre_comma}"]
+            desc_parts = [f"**Durum**                    **Türler**\n{status_short}              {genre_comma}"]
             if summary:
                 desc_parts.insert(0, f"**Özet;**\n{summary}\n")
             
