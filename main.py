@@ -60,6 +60,10 @@ sent_messages = {}
 # Tamamlanan serileri takip et (tekrar mesaj atmasın)
 completed_series = set()
 
+# Seri thread'lerindeki mesajları takip et (güncelleme için)
+# {seri_adı_lower: discord_message_id}
+thread_messages = {}
+
 
 # ───────────────────────────────────────────────
 # THREAD OLUŞTUR VEYA BUL FONKSİYONU
@@ -641,7 +645,7 @@ client.lastPostTime = None  # type: ignore
 
 @tasks.loop(seconds=10.0)
 async def fetchUpdates():
-    global sent_messages
+    global sent_messages, thread_messages
 
     # 1) Blogger API çağrısı ayrı try içinde (çökmesin)
     try:
@@ -693,11 +697,15 @@ async def fetchUpdates():
                 "chapter", "series", "devam ediyor", "tamamlandı", "bırakıldı",
                 "dram", "korku", "gizem", "psikoloji", "shounen", "shoujo",
                 "seinen", "josei", "aksiyon", "macera", "komedi", "romantik",
-                "fantastik", "bilim kurgu", "spor", "müzik", "okul", "günlük yaşam"
+                "fantastik", "bilim kurgu", "spor", "müzik", "okul", "günlük yaşam",
+                "🔒"  # +18 içerik kilidi etiketi
             }
             for label in labels:
                 low = label.lower()
                 if low in skip_labels:
+                    continue
+                # Emoji kontrolü (🔒 gibi)
+                if label == "🔒":
                     continue
                 if low.replace(" ", "").isdigit():
                     continue
@@ -793,7 +801,7 @@ async def fetchUpdates():
             view.add_item(read_button)
             
             # Seri sayfası butonu (Blogger'da seri etiketine git)
-            series_url = f"https://d3manga.blogspot.com/search/label/{manga_title.replace(' ', '%20')}"
+            series_url = f"https://d3-manga.blogspot.com/search/label/{manga_title.replace(' ', '%20')}"
             series_button = discord.ui.Button(
                 label="📚 Tüm Bölümler",
                 style=discord.ButtonStyle.link,
@@ -862,11 +870,28 @@ async def fetchUpdates():
             except Exception as e:
                 print(f"[fetchUpdates] Ana kanal mesaj hatası: {e}")
             
-            # 2. Seri thread'ine gönder - @everyone ile
+            # 2. Seri thread'ine gönder - Tek mesaj, güncelleme mantığı
             if series_thread:
                 try:
-                    await series_thread.send(content="@everyone", embed=embed, view=view)
-                    print(f"[fetchUpdates] Thread'e mesaj gönderildi: {series_thread.name}")
+                    series_key = manga_title.lower()
+                    
+                    # Mevcut mesaj var mı kontrol et
+                    if series_key in thread_messages:
+                        # Mevcut mesajı güncelle
+                        try:
+                            old_msg = await series_thread.fetch_message(thread_messages[series_key])
+                            await old_msg.edit(content="@everyone", embed=embed, view=view)
+                            print(f"[fetchUpdates] Thread mesajı güncellendi: {series_thread.name}")
+                        except discord.NotFound:
+                            # Mesaj silinmiş, yeni gönder
+                            new_msg = await series_thread.send(content="@everyone", embed=embed, view=view)
+                            thread_messages[series_key] = new_msg.id
+                            print(f"[fetchUpdates] Thread'e yeni mesaj gönderildi (eski silinmiş): {series_thread.name}")
+                    else:
+                        # İlk kez mesaj gönder
+                        new_msg = await series_thread.send(content="@everyone", embed=embed, view=view)
+                        thread_messages[series_key] = new_msg.id
+                        print(f"[fetchUpdates] Thread'e ilk mesaj gönderildi: {series_thread.name}")
                 except Exception as e:
                     print(f"[fetchUpdates] Thread mesaj hatası: {e}")
 
