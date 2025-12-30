@@ -376,6 +376,41 @@ def get_series_cover_by_label(series_name: str) -> str | None:
         return None
 
 
+def get_series_page_url(series_name: str) -> str | None:
+    """
+    Blogger'da seri sayfasının URL'sini döndürür.
+    
+    Args:
+        series_name: Manga/webtoon seri ismi
+    
+    Returns:
+        Seri sayfası URL'si veya None
+    """
+    if not series_name:
+        return None
+    
+    try:
+        labels = f"{series_name},Series"
+        url = (f"https://www.googleapis.com/blogger/v3/blogs/"
+               f"{BLOG_ID}/posts?labels={labels}&key={BLOGGER_API_KEY}")
+        data = requests.get(url).json()
+
+        if "items" not in data or not data["items"]:
+            labels_lower = f"{series_name},series"
+            url_lower = (f"https://www.googleapis.com/blogger/v3/blogs/"
+                        f"{BLOG_ID}/posts?labels={labels_lower}&key={BLOGGER_API_KEY}")
+            data = requests.get(url_lower).json()
+        
+        if "items" not in data or not data["items"]:
+            return None
+
+        return data["items"][0].get("url", None)
+
+    except Exception as e:
+        print(f"[get_series_page_url] Hata: {e}")
+        return None
+
+
 # ───────────────────────────────────────────────
 # BOT AÇILDIĞINDA
 # ───────────────────────────────────────────────
@@ -800,8 +835,11 @@ async def fetchUpdates():
             )
             view.add_item(read_button)
             
-            # Seri sayfası butonu (Blogger'da seri etiketine git)
-            series_url = f"https://d3-manga.blogspot.com/search/label/{manga_title.replace(' ', '%20')}"
+            # Seri sayfası butonu (Blogger'da seri sayfasına git)
+            series_url = get_series_page_url(manga_title)
+            if not series_url:
+                # Fallback: arama sayfasına git
+                series_url = f"https://d3-manga.blogspot.com/search?q={manga_title.replace(' ', '%20')}"
             series_button = discord.ui.Button(
                 label="📚 Tüm Bölümler",
                 style=discord.ButtonStyle.link,
@@ -870,7 +908,7 @@ async def fetchUpdates():
             except Exception as e:
                 print(f"[fetchUpdates] Ana kanal mesaj hatası: {e}")
             
-            # 2. Seri thread'ine gönder - Tek mesaj, güncelleme mantığı
+            # 2. Seri thread'ine gönder - Tek mesaj, güncelleme mantığı + bildirim
             if series_thread:
                 try:
                     series_key = manga_title.lower()
@@ -880,8 +918,15 @@ async def fetchUpdates():
                         # Mevcut mesajı güncelle
                         try:
                             old_msg = await series_thread.fetch_message(thread_messages[series_key])
-                            await old_msg.edit(content="@everyone", embed=embed, view=view)
+                            await old_msg.edit(embed=embed, view=view)
                             print(f"[fetchUpdates] Thread mesajı güncellendi: {series_thread.name}")
+                            
+                            # Bildirim için kısa mesaj at ve sil
+                            import asyncio
+                            notify_msg = await series_thread.send(f"@everyone 📢 **Bölüm {chapter_number}** yayınlandı!")
+                            await asyncio.sleep(120)  # 2 dakika
+                            await notify_msg.delete()
+                            print(f"[fetchUpdates] Bildirim mesajı gönderildi ve silindi: {series_thread.name}")
                         except discord.NotFound:
                             # Mesaj silinmiş, yeni gönder
                             new_msg = await series_thread.send(content="@everyone", embed=embed, view=view)
