@@ -38,6 +38,7 @@ client = commands.Bot(command_prefix="++", intents=intents)
 # ───────────────────────────────────────────────
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
+SERIES_THREAD_CHANNEL_ID = int(os.getenv("SERIES_THREAD_CHANNEL_ID", "0"))
 ZEBZETOON_CSV_URL = "https://zebzetoon.vercel.app/liste.csv"
 ZEBZETOON_BASE_URL = "https://zebzetoon.vercel.app"
 ZEBZETOON_CDN_BASE = "https://cdn.jsdelivr.net/gh/toonarc/kapaklar/"
@@ -147,6 +148,87 @@ def parse_chapter_range(aralik):
         return int(parts[1])
     except (ValueError, IndexError):
         return None
+
+
+# ───────────────────────────────────────────────
+# SERİ THREAD'İ OLUŞTUR VEYA BUL
+# ───────────────────────────────────────────────
+async def get_or_create_series_thread(guild, series_name, cover_url=None, status=None, genres=None):
+    """
+    Text channel altında seri için thread bulur veya oluşturur.
+    """
+    if not series_name or not SERIES_THREAD_CHANNEL_ID:
+        return None
+    
+    parent_channel = guild.get_channel(SERIES_THREAD_CHANNEL_ID)
+    if not parent_channel:
+        print(f"[get_or_create_series_thread] Kanal bulunamadı: {SERIES_THREAD_CHANNEL_ID}")
+        return None
+    
+    series_lower = series_name.lower()
+    
+    # Mevcut thread'leri kontrol et
+    if hasattr(parent_channel, 'threads'):
+        for thread in parent_channel.threads:
+            if thread.name.lower() == series_lower:
+                return thread
+    
+    # Aktif thread'leri kontrol et
+    try:
+        active_threads = await guild.active_threads()
+        for thread in active_threads:
+            if thread.parent_id == SERIES_THREAD_CHANNEL_ID and thread.name.lower() == series_lower:
+                return thread
+    except Exception as e:
+        print(f"[get_or_create_series_thread] Aktif thread hatası: {e}")
+    
+    # Arşivlenmiş thread'leri kontrol et
+    try:
+        if hasattr(parent_channel, 'archived_threads'):
+            async for thread in parent_channel.archived_threads(limit=100):
+                if thread.name.lower() == series_lower:
+                    return thread
+    except Exception as e:
+        print(f"[get_or_create_series_thread] Arşiv thread hatası: {e}")
+    
+    # Yeni thread oluştur
+    try:
+        # Durum rengi
+        embed_color = 0x00BFFF
+        if status and "Devam" in status:
+            embed_color = 0x00FF7F
+        elif status and "Tamamlandı" in status:
+            embed_color = 0xFFD700
+        elif status and "Bırakıldı" in status:
+            embed_color = 0xFF4500
+        
+        # İlk mesaj embed'i
+        desc_parts = []
+        if status:
+            desc_parts.append(f"**{status}**")
+        if genres:
+            desc_parts.append(f"🏷️ {genres}")
+        desc_parts.append("Yeni bölümler burada paylaşılacak!")
+        
+        embed = discord.Embed(
+            title=f"📚 {series_name}",
+            description="\n".join(desc_parts),
+            color=embed_color,
+        )
+        if cover_url:
+            embed.set_thumbnail(url=cover_url)
+        
+        # Thread oluştur
+        if isinstance(parent_channel, discord.TextChannel):
+            msg = await parent_channel.send(embed=embed)
+            thread = await msg.create_thread(name=series_name)
+            print(f"[get_or_create_series_thread] Yeni thread oluşturuldu: {series_name}")
+            return thread
+        
+    except Exception as e:
+        print(f"[get_or_create_series_thread] Thread oluşturma hatası: {e}")
+    
+    return None
 
 
 # ───────────────────────────────────────────────
@@ -413,6 +495,9 @@ async def check_new_chapters():
             print(f"[check_new_chapters] Kanal bulunamadı: {CHANNEL_ID}")
             return
         
+        # Guild al
+        guild = channel.guild
+        
         # Her seri için kontrol
         for series_key, series_info in series_data.items():
             series_name = series_info['isim']
@@ -433,9 +518,18 @@ async def check_new_chapters():
                 # Kapak resmini al
                 cover_url = get_cover_image_url(series_info['kapak'])
                 
+                # Seri thread'ini bul veya oluştur
+                series_thread = await get_or_create_series_thread(
+                    guild, 
+                    series_name, 
+                    cover_url, 
+                    series_info['durum'], 
+                    series_info['tur']
+                )
+                
                 # Embed oluştur
                 embed = discord.Embed(
-                    title=f"📖 {series_name}",
+                    title=f"� {series_name}",
                     description=f"**Bölüm {current_chapter}** yayınlandı!\n\n"
                                f"━━━━━━━━━━━━━━━━━━━━━━",
                     color=random.choice(EMBED_COLORS),
@@ -477,8 +571,9 @@ async def check_new_chapters():
                     url=chapter_url
                 ))
                 
-                # Duyuru gönder
-                await channel.send(embed=embed, view=view)
+                # Duyuru gönder - thread varsa thread'e, yoksa ana kanala
+                target_channel = series_thread if series_thread else channel
+                await target_channel.send(embed=embed, view=view)
                 
                 # Son bölümü güncelle
                 last_chapters[series_name] = current_chapter
