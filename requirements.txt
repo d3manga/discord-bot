@@ -1,7 +1,2 @@
-discord-py
-google-api-python-client
+discord.py
 requests
-flask
-waitress
-hypothesis
-pytest
