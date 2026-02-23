@@ -85,27 +85,35 @@ def fetch_zebzetoon_data():
         
         series_data = {}
         for line in data_lines:
-            parts = [p.strip() for p in line.split(',')]
+            # Virgülle ayır ama özet içindeki virgülleri koru
+            # Basit CSV parser - 15 alan bekliyoruz
+            parts = line.split(',', 14)  # İlk 14 virgülde böl, kalanı son alana koy
+            
             if len(parts) < 15:
                 continue
             
-            series_name = parts[0]
+            series_name = parts[0].strip()
+            
+            # Boş satırları atla
+            if not series_name:
+                continue
+            
             series_data[series_name.lower()] = {
-                'isim': parts[0],
-                'klasor': parts[1],
-                'user': parts[2],
-                'repo': parts[3],
-                'aralik': parts[4],
-                'kapak': parts[5],
-                'banner': parts[6],
-                'tur': parts[7],
-                'durum': parts[8],
-                'yazar': parts[9],
-                'ozet': parts[10],
-                'puan': parts[11],
-                'tarih': parts[12],
-                'kilitli': parts[13],
-                'kilitliBolumSayisi': parts[14]
+                'isim': parts[0].strip(),
+                'klasor': parts[1].strip(),
+                'user': parts[2].strip(),
+                'repo': parts[3].strip(),
+                'aralik': parts[4].strip(),
+                'kapak': parts[5].strip(),
+                'banner': parts[6].strip(),
+                'tur': parts[7].strip(),
+                'durum': parts[8].strip(),
+                'yazar': parts[9].strip(),
+                'ozet': parts[10].strip(),
+                'puan': parts[11].strip(),
+                'tarih': parts[12].strip(),
+                'kilitli': parts[13].strip(),
+                'kilitliBolumSayisi': parts[14].strip()
             }
         
         series_cache = series_data
@@ -571,9 +579,11 @@ async def check_new_chapters():
                     url=chapter_url
                 ))
                 
-                # Duyuru gönder - thread varsa thread'e, yoksa ana kanala
-                target_channel = series_thread if series_thread else channel
-                await target_channel.send(embed=embed, view=view)
+                # Duyuru gönder - hem ana kanala hem thread'e
+                await channel.send(embed=embed, view=view)
+                
+                if series_thread:
+                    await series_thread.send(embed=embed, view=view)
                 
                 # Son bölümü güncelle
                 last_chapters[series_name] = current_chapter
