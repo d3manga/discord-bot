@@ -3,7 +3,7 @@ import re
 import random
 import requests
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from datetime import datetime
 from urllib.parse import unquote
 
@@ -37,6 +37,7 @@ client = commands.Bot(command_prefix="++", intents=intents)
 # SECRETS
 # ───────────────────────────────────────────────
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 ZEBZETOON_CSV_URL = "https://zebzetoon.vercel.app/liste.csv"
 ZEBZETOON_BASE_URL = "https://zebzetoon.vercel.app"
 ZEBZETOON_CDN_BASE = "https://cdn.jsdelivr.net/gh/toonarc/kapaklar/"
@@ -48,6 +49,10 @@ ZEBZETOON_CDN_BASE = "https://cdn.jsdelivr.net/gh/toonarc/kapaklar/"
 series_cache = {}
 cache_timestamp = None
 CACHE_DURATION = 300  # 5 dakika
+
+# Son bölüm takibi (otomatik duyuru için)
+# {seri_adı: son_bölüm_numarası}
+last_chapters = {}
 
 
 # ───────────────────────────────────────────────
@@ -129,6 +134,21 @@ def get_cover_image_url(kapak_path):
     return f"{ZEBZETOON_CDN_BASE}{clean_path}"
 
 
+def parse_chapter_range(aralik):
+    """
+    Bölüm aralığını parse eder ve son bölüm numarasını döndürür.
+    Örnek: "1-8" -> 8, "1-40" -> 40
+    """
+    if not aralik or '-' not in aralik:
+        return None
+    
+    try:
+        parts = aralik.split('-')
+        return int(parts[1])
+    except (ValueError, IndexError):
+        return None
+
+
 # ───────────────────────────────────────────────
 # BOT AÇILDIĞINDA
 # ───────────────────────────────────────────────
@@ -137,6 +157,8 @@ async def on_ready():
     print("ZebzeToon Discord Bot aktif!")
     # İlk veri yüklemesi
     fetch_zebzetoon_data()
+    # Otomatik duyuru task'ını başlat
+    check_new_chapters.start()
     await client.change_presence(activity=discord.Game(name="Manga Okuyor..."))
 
 
@@ -366,6 +388,117 @@ async def seri(ctx, *, seri_adi: str = None):
     except Exception as e:
         print(f"[seri] Hata: {e}")
         await ctx.send("❌ Seri yüklenirken hata oluştu.")
+
+
+# ───────────────────────────────────────────────
+# OTOMATİK YENİ BÖLÜM KONTROLÜ
+# ───────────────────────────────────────────────
+@tasks.loop(minutes=10)
+async def check_new_chapters():
+    """
+    Her 10 dakikada bir CSV'yi kontrol eder ve yeni bölüm varsa duyuru yapar
+    """
+    global last_chapters
+    
+    try:
+        # Veriyi çek
+        series_data = fetch_zebzetoon_data()
+        
+        if not series_data:
+            return
+        
+        # Kanal kontrolü
+        channel = client.get_channel(CHANNEL_ID)
+        if not channel:
+            print(f"[check_new_chapters] Kanal bulunamadı: {CHANNEL_ID}")
+            return
+        
+        # Her seri için kontrol
+        for series_key, series_info in series_data.items():
+            series_name = series_info['isim']
+            current_chapter = parse_chapter_range(series_info['aralik'])
+            
+            if current_chapter is None:
+                continue
+            
+            # İlk çalışma - sadece kaydet, duyuru yapma
+            if series_name not in last_chapters:
+                last_chapters[series_name] = current_chapter
+                continue
+            
+            # Yeni bölüm kontrolü
+            if current_chapter > last_chapters[series_name]:
+                print(f"[check_new_chapters] Yeni bölüm bulundu: {series_name} - Bölüm {current_chapter}")
+                
+                # Kapak resmini al
+                cover_url = get_cover_image_url(series_info['kapak'])
+                
+                # Embed oluştur
+                embed = discord.Embed(
+                    title=f"📖 {series_name}",
+                    description=f"**Bölüm {current_chapter}** yayınlandı!\n\n"
+                               f"━━━━━━━━━━━━━━━━━━━━━━",
+                    color=random.choice(EMBED_COLORS),
+                )
+                
+                # Seri ve bölüm bilgisi
+                embed.add_field(
+                    name="📚 Seri",
+                    value=f"`{series_name}`",
+                    inline=True,
+                )
+                
+                embed.add_field(
+                    name="📄 Bölüm",
+                    value=f"`{current_chapter}`",
+                    inline=True,
+                )
+                
+                # Boş alan
+                embed.add_field(
+                    name="\u200b",
+                    value="\u200b",
+                    inline=True,
+                )
+                
+                # Kapak resmi
+                if cover_url:
+                    embed.set_image(url=cover_url)
+                
+                embed.set_footer(text="Zebze Toon")
+                
+                # Buton ekle
+                view = discord.ui.View()
+                from urllib.parse import quote
+                chapter_url = f"{ZEBZETOON_BASE_URL}/?seri={quote(series_name)}&bolum={current_chapter}"
+                view.add_item(discord.ui.Button(
+                    label="📖 Oku",
+                    style=discord.ButtonStyle.link,
+                    url=chapter_url
+                ))
+                
+                # Duyuru gönder
+                await channel.send(embed=embed, view=view)
+                
+                # Son bölümü güncelle
+                last_chapters[series_name] = current_chapter
+        
+    except Exception as e:
+        print(f"[check_new_chapters] Hata: {e}")
+
+
+@check_new_chapters.before_loop
+async def before_check_new_chapters():
+    """Task başlamadan önce bot'un hazır olmasını bekle"""
+    await client.wait_until_ready()
+    # İlk çalışmada mevcut bölümleri kaydet
+    series_data = fetch_zebzetoon_data()
+    for series_key, series_info in series_data.items():
+        series_name = series_info['isim']
+        current_chapter = parse_chapter_range(series_info['aralik'])
+        if current_chapter:
+            last_chapters[series_name] = current_chapter
+    print("[check_new_chapters] Otomatik bölüm kontrolü başlatıldı")
 
 
 # ───────────────────────────────────────────────
